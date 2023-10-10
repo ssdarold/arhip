@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-(7wis=$qzrtud5(22b!$=6n&^=k1i7cu((xiddqoaz9i$(!)m!
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['arhip-justnik.pythonanywhere.com']
 
 
 # Application definition
@@ -38,7 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'main',
-    'flatblocks',
+    'quiz',
 ]
 
 MIDDLEWARE = [
@@ -117,7 +117,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.1/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = 'images/'
+STATIC_ROOT = '/home/Justnik/arhip/arhip/images'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.1/ref/settings/#default-auto-field

@@ -9,7 +9,7 @@ import datetime
 from datetime import date, timedelta
 from aiogram.dispatcher import FSMContext
 from collections import Counter
-from aiogram.types import InputFile 
+from aiogram.types import InputFile
 from yookassa import Configuration, Payment
 import uuid
 import asyncio
@@ -102,17 +102,49 @@ def check_answer_images_exist(rows):
         else:
             return False # Картинок нет
 
+def most_frequent(List):
+    counter = 0
+    num = List[0]
+     
+    for i in List:
+        curr_frequency = List.count(i)
+        if(curr_frequency> counter):
+            counter = curr_frequency
+            num = i
+ 
+    return num
+
+# Определение архетипа
+async def get_arch_id(test_id):
+    conn = sqlite3.connect('quiz.db')
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT answer_id_id FROM main_test_process WHERE test_id_id = ?", (test_id,))
+    res = cursor.fetchall()
+
+    archetypes = []
+
+    for i in res:
+        ans_id = i[0]
+        cursor.execute("SELECT first_arch_id_id FROM main_answer WHERE id = ?", (ans_id,))
+        first_arch = cursor.fetchall()[0][0]
+        archetypes.append(first_arch)
+        cursor.execute("SELECT second_arch_id_id FROM main_answer WHERE id = ?", (ans_id,))
+        second_arch = cursor.fetchall()[0][0]
+        archetypes.append(second_arch)
+
+    return most_frequent(archetypes)
 
 
 # Функция для подведения итогов тестирования
 async def get_test_summary(user_id, test_id):
 
     # Очистка предыдущих сообщений
-    for delete_message_id in messages_for_delete:
-        await bot.delete_message(user_id, delete_message_id)
-    
-    messages_for_delete.clear()
+    if messages_for_delete:
+        for delete_message_id in messages_for_delete:
+            await bot.delete_message(user_id, delete_message_id)
 
+        messages_for_delete.clear()
     # Подключаемся к SQLite базе данных
     conn = sqlite3.connect('quiz.db')
     cursor = conn.cursor()
@@ -121,12 +153,8 @@ async def get_test_summary(user_id, test_id):
     cursor.execute("UPDATE main_test SET status = 'completed' WHERE id = ?", (test_id,))
     conn.commit()
 
-    # Собираем id всех архетипов (first_arch и second_arch) из таблицы main_test_process
-    cursor.execute("SELECT first_arch_id_id, second_arch_id_id FROM main_test_process WHERE test_id_id = ?", (test_id,))
-    archetypes = [arch for sublist in cursor.fetchall() for arch in sublist]
-
-    # Находим наиболее часто встречающийся архетип
-    archetype_id = Counter(archetypes).most_common(1)[0][0]
+    # Определяем архетип-победитель
+    archetype_id = await get_arch_id(test_id)
 
     # Записываем в базу, в таблицу main_users, значение архетипа
     cursor.execute("UPDATE main_user SET archetype_id = ? WHERE user_id = ?", (archetype_id, user_id))
@@ -136,8 +164,10 @@ async def get_test_summary(user_id, test_id):
     cursor.execute("SELECT archetype_name, archetype_description FROM main_archetype WHERE id = ?", (archetype_id,))
     archetype_name, archetype_description = cursor.fetchone()
 
+    summary_markup = types.InlineKeyboardMarkup()
+    summary_markup.add(cancel_button)
     # Отправляем пользователю сообщение с результатами теста
-    await bot.send_message(user_id, archetype_description)
+    await bot.send_message(user_id, archetype_description, reply_markup=summary_markup)
 
     # Проверяем, есть ли связанный пользователь
     cursor.execute("SELECT first_user_id FROM main_test WHERE id = ?", (test_id,))
@@ -150,11 +180,11 @@ async def get_test_summary(user_id, test_id):
 
 
         # Получаем архетип первого пользователя
-        cursor.execute('SELECT archetype_id FROM main_user WHERE "user_id" = ?', (first_user_id,))
+        cursor.execute('SELECT archetype_id FROM main_user WHERE user_id = ?', (first_user_id,))
         first_user_archetype_id = cursor.fetchone()[0]
 
         # Находим совместимость архетипов
-        cursor.execute("SELECT first_user_description FROM main_compatibility WHERE "
+        cursor.execute("SELECT first_user_description FROM main_сompatibility WHERE "
                     "(first_arch_id = ? AND second_arch_id = ?) OR (first_arch_id = ? AND second_arch_id = ?)",
                     (first_user_archetype_id, archetype_id, archetype_id, first_user_archetype_id))
         first_user_description = cursor.fetchone()[0]
@@ -218,13 +248,13 @@ async def handle_answer(callback_query: types.CallbackQuery, state: FSMContext):
 
 
 
-        
+
         await test_process(callback_query.from_user.id, test_id)
 
 
         # Закрываем соединение с базой данных
         conn.close()
-    
+
     except sqlite3.Error as e:
         print(f"Ошибка базы данных: {e}")
 
@@ -255,22 +285,27 @@ async def back_to_question(callback_query: types.CallbackQuery):
 
     conn.commit()
 
-    # Получение текста нового вопроса
-    cursor.execute('SELECT text FROM main_question WHERE "order" = ?', (new_question_id,))
-    question_text = cursor.fetchone()[0]
+    await test_process(callback_query.from_user.id, test_id)
 
-    # Получение вариантов ответа для нового вопроса
-    cursor.execute('SELECT id, text, answer_image FROM main_answer WHERE "question_id" = ?', (new_question_id,))
-    answers = cursor.fetchall()
+    # # Получение id нового вопроса
+    # cursor.execute('SELECT id FROM main_question WHERE "order" = ?', (new_question_id,))
+    # question_id = cursor.fetchone()[0]
+    
+    # # Получение текста нового вопроса
+    # cursor.execute('SELECT text FROM main_question WHERE "order" = ?', (new_question_id,))
+    # question_text = cursor.fetchone()[0]
 
-    # Закрываем соединение с базой данных
-    conn.close()
 
-    # Вызываем функцию send_question_and_answers для отправки нового вопроса
-    await send_question_and_answers(callback_query.from_user.id, test_id, new_question_id, question_text, answers)
+    # # Получение вариантов ответа для текущего вопроса
+    # cursor.execute("SELECT id, text, answer_image FROM main_answer WHERE question_id = ?", (question_id,))
+    # answers = cursor.fetchall()
 
-    # Отвечаем на callback_query, чтобы избежать ошибки
-    await callback_query.answer()
+
+    # # # Отправка вопроса и вариантов ответа
+    # await send_question_and_answers(callback_query.from_user.id, test_id, question_id, question_text, answers)
+
+    # # Отвечаем на callback_query, чтобы избежать ошибки
+    # await callback_query.answer()
 
 
 
@@ -289,63 +324,87 @@ async def send_question_and_answers(user_id, test_id, current_question, question
     conn.close()
 
     # Очистка предыдущих сообщений
-    for delete_message_id in messages_for_delete:
-        await bot.delete_message(user_id, delete_message_id)
-    
-    messages_for_delete.clear()
-    
+    if messages_for_delete:
+        for delete_message_id in messages_for_delete:
+            await bot.delete_message(user_id, delete_message_id)
 
-    markup = types.InlineKeyboardMarkup()
+        messages_for_delete.clear()
+
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
     back_button = types.InlineKeyboardButton("На шаг назад", callback_data=f"backtoquestion_{test_id}_{current_question}")
-    main_menu_button = types.InlineKeyboardButton("Вернуться в главное меню", callback_data=f"main_menu")
+    main_menu_button = types.InlineKeyboardButton("Вернуться в главное меню", callback_data=f"cancel")
 
+    answer_buttons = []
+    answers_text = "Выберите вариант ответа:\n\n\n"
+    counter = 1
     # Если изображения есть в ответах
     if check_answer_images_exist(answers):
-        if current_question == 1:
-            markup.add(main_menu_button)
-        else:
-            markup.add(back_button, main_menu_button)
-
-        full_question_text = f"""<b>Вопрос {current_question} из {all_questions}</b>
-        
-        {question_text}"""
-        # Отправка текущего вопроса
-        main_msg = await bot.send_message(user_id, full_question_text, reply_markup=markup, parse_mode="HTML")
-        messages_for_delete.append(main_msg.message_id) # Добавляем id сообщения в список на удаление
 
         # Отправка вариантов ответа
         for answer_id, answer_text, answer_image in answers:
-            answer_markup = types.InlineKeyboardMarkup()
-            answer_button = types.InlineKeyboardButton(answer_text, callback_data=f"handleanswer_{test_id}_{current_question}_{answer_id}")
-            answer_markup.add(answer_button)
-
+            # answer_markup = types.InlineKeyboardMarkup()
+            # answer_button = types.InlineKeyboardButton(answer_text, callback_data=f"handleanswer_{test_id}_{current_question}_{answer_id}")
+            # answer_markup.add(answer_button)
+    
             if answer_image.endswith('.gif'):
                 image_url = InputFile(answer_image)
-
+    
                 # Если изображение - gif, используем метод send_animation
-                msg = await bot.send_animation(user_id, image_url, reply_markup=answer_markup)
+                msg = await bot.send_animation(user_id, image_url, caption=f"{answer_text} (Рисунок {counter})")
                 messages_for_delete.append(msg.message_id) # Добавляем id сообщения в список на удаление
             else:
                 image_url = InputFile(answer_image)
                 # Иначе, используем метод send_photo
-                msg = await bot.send_photo(user_id, image_url, reply_markup=answer_markup)
+                msg = await bot.send_photo(user_id, image_url, caption=f"{answer_text} (Рисунок {counter})")
                 messages_for_delete.append(msg.message_id) # Добавляем id сообщения в список на удаление
+    
+            answers_text += f"<b>{counter}</b>. {answer_text} <b><i>(см. Рисунок {counter})</i></b> \n\n"
+    
+            answer_button = types.InlineKeyboardButton(counter, callback_data=f"handleanswer_{test_id}_{current_question}_{answer_id}")
+            # markup.add(answer_button)
+            answer_buttons.append(answer_button)
+    
+            counter += 1
+    
+        markup.add(*answer_buttons)
+        # Если вопрос не первый - добавляем кнопку "Шаг назад". Если первый - не добавляем
+        if current_question == 1:
+            markup.add(main_menu_button)
+        else:
+            markup.add(back_button, main_menu_button)
+    
+        full_question_text = f"""Вопрос {current_question} из {all_questions}\n\n\n<b>{question_text}</b>\n\n\n{answers_text}"""
+        # Отправка текущего вопроса
+        main_msg = await bot.send_message(user_id, full_question_text, reply_markup=markup, parse_mode="HTML")
+        messages_for_delete.append(main_msg.message_id) # Добавляем id сообщения в список на удаление
 
+
+            
     # Если изображений в ответах нет
     else:
-        for answer_id, answer_text, answer_image in answers:
-            answer_button = types.InlineKeyboardButton(answer_text, callback_data=f"handleanswer_{test_id}_{current_question}_{answer_id}")
-            markup.add(answer_button)
 
+        for answer_id, answer_text, answer_image in answers:
+            # answer_button = types.InlineKeyboardButton(answer_text, callback_data=f"handleanswer_{test_id}_{current_question}_{answer_id}")
+            # markup.add(answer_button)
+
+            answers_text += f"<b>{counter}</b>. {answer_text} \n\n"
+
+            answer_button = types.InlineKeyboardButton(counter, callback_data=f"handleanswer_{test_id}_{current_question}_{answer_id}")
+            # markup.add(answer_button)
+            answer_buttons.append(answer_button)
+
+            counter += 1
+
+        markup.add(*answer_buttons)
         if current_question == 1:
             markup.add(main_menu_button)
         else:
             markup.add(back_button, main_menu_button)
 
+        full_question_text = f"""Вопрос {get_current_question_index(test_id) + 1} из {all_questions}\n\n\n<b>{question_text}</b>\n\n\n{answers_text}
 
-        full_question_text = f"""<b>Вопрос {current_question} из {all_questions}</b>
-        
-        {question_text}"""
+"""
         msg = await bot.send_message(user_id, full_question_text, reply_markup=markup, parse_mode="HTML")
         messages_for_delete.append(msg.message_id) # Добавляем id сообщения в список на удаление
 
@@ -384,18 +443,22 @@ async def test_process(user_id, test_id):
         # cursor.execute("SELECT id FROM main_question WHERE order = ?", (test_answer_count,))
         # question_id = cursor.fetchone()[0]
 
+        # Получение id нового вопроса
+        cursor.execute('SELECT id FROM main_question WHERE "order" = ?', (test_answer_count,))
+        question_id = cursor.fetchone()[0]
+        
         # Получение текста нового вопроса
         cursor.execute('SELECT text FROM main_question WHERE "order" = ?', (test_answer_count,))
         question_text = cursor.fetchone()[0]
 
 
         # Получение вариантов ответа для текущего вопроса
-        cursor.execute("SELECT id, text, answer_image FROM main_answer WHERE question_id = ?", (test_answer_count,))
+        cursor.execute("SELECT id, text, answer_image FROM main_answer WHERE question_id = ?", (question_id,))
         answers = cursor.fetchall()
 
 
         # # Отправка вопроса и вариантов ответа
-        await send_question_and_answers(user_id, test_id, test_answer_count, question_text, answers)
+        await send_question_and_answers(user_id, test_id, question_id, question_text, answers)
 
     # Если количество пройденных вопросов более или равно количеству пройденных тестов, то подводим итоги теста
     else:
@@ -462,21 +525,21 @@ async def start_new_test(user_id, first_user_id=None):
                 # Создание записи в таблице main_test
                 cursor.execute("INSERT INTO main_test (user_id, date_time, status, first_user_id) VALUES (?, ?, ?, ?)",
                             (user_id, current_datetime, 'pending', first_user_id))
-                
+
                 conn.commit()
-                
+
                 test_id = cursor.lastrowid # Получаем id вновь созданного теста
 
             else:
                 # Создание записи в таблице main_test
                 cursor.execute("INSERT INTO main_test (user_id, date_time, status) VALUES (?, ?, ?)",
                             (user_id, current_datetime, 'pending'))
-                
+
                 conn.commit()
-                
+
                 test_id = cursor.lastrowid # Получаем id вновь созданного теста
 
-            
+
 
             # Закрытие соединения
             conn.close()
@@ -487,11 +550,11 @@ async def start_new_test(user_id, first_user_id=None):
             # await bot.send_message(user_id, f"Дошли до места вызова test_process. Test id = {test_id}")
 
             return True  # Успешно начат новый тест
-        
+
         except Exception as e:
             print(f"Ошибка при начале нового теста: {e}")
             return False  # Произошла ошибка
-        
+
     else:
         error_payment_markup = types.InlineKeyboardMarkup()
         error_payment_markup.add(subscribe_button, cancel_button)
@@ -561,7 +624,7 @@ async def process_subscribe(callback_query: types.CallbackQuery):
                 elif payment_info.status == 'canceled':
                     await bot.send_message(callback_query.from_user.id, f"Платеж отменен.")
                     break
-                
+
                 # Автоматическое подтверждение платежа
                 elif payment_info.status == 'waiting_for_capture':
                     idempotence_key = str(uuid.uuid4())
@@ -611,7 +674,7 @@ async def process_subscribe(callback_query: types.CallbackQuery):
                     success_subscribe_markup.add(cancel_button)
 
 
-                    invite_link = f'https://t.me/Pryanebot?start={user_id}'
+                    invite_link = f'https://t.me/arhip_quiz_bot?start={user_id}'
                     await bot.send_message(user_id, f'Оплата прошла успешно! Ваша уникальная ссылка для приглашения: {invite_link}. Отправьте её тому, с кем хотите проверить совместимость. Результат придёт вам сразу как только приглашенный пользователь пройдет тест.', reply_markup=success_subscribe_markup)
 
                     break
@@ -620,7 +683,7 @@ async def process_subscribe(callback_query: types.CallbackQuery):
                 elif payment_info.status == 'canceled':
                     await bot.send_message(callback_query.from_user.id, f"Платеж отменен.")
                     break
-                
+
                 # Автоматическое подтверждение платежа
                 elif payment_info.status == 'waiting_for_capture':
                     idempotence_key = str(uuid.uuid4())
@@ -680,8 +743,8 @@ async def on_start(message: types.Message):
         related_markup = types.InlineKeyboardMarkup()
         check_compat_button = types.InlineKeyboardButton("Узнать совместимость", callback_data=f"checkcompat_{first_user_id}_{current_user_id}")
         start_related_test_button = types.InlineKeyboardButton("Пройти тест", callback_data=f"startrelatedtest_{first_user_id}_{current_user_id}")
-        
-        
+
+
         # Проверяем, есть ли архетип у текущего пользователя
         cursor.execute("SELECT archetype_id FROM main_user WHERE user_id = ?", (current_user_id,))
         current_user_archetype = cursor.fetchone()[0]
@@ -690,20 +753,12 @@ async def on_start(message: types.Message):
         if current_user_archetype:
 
             related_markup.add(check_compat_button)
-            hello_text = """🌙 Добро пожаловать в мир удивительных архетипов! 🌙
+            hello_text = """🌙 Добро пожаловать в мир удивительных архетипов! 🌙\n\nВ нашем мире очень важно понять свой психотип для того, чтобы понять, в какую сторону двигаться по жизни. Пройди тест и я помогу тебе определить свою идентичность. \n\nВас пригласили для определения совместимости. Вы уже проходили тест, поэтому можете узнать совместимость прямо сейчас!"""
 
-            В нашем мире очень важно понять свой психотип для того, чтобы понять, в какую сторону двигаться по жизни. Пройди тест и я помогу тебе определить свою идентичность. 
-            
-            Вас пригласили для определения совместимости. Вы уже проходили тест, поэтому можете узнать совместимость прямо сейчас!"""
-            
 
         else:
             related_markup.add(start_related_test_button)
-            hello_text = """🌙 Добро пожаловать в мир удивительных архетипов! 🌙
-
-            В нашем мире очень важно понять свой психотип для того, чтобы понять, в какую сторону двигаться по жизни. Пройди тест и я помогу тебе определить свою идентичность. 
-            
-            Вас пригласили для определения совместимости. Сперва вам необходимо узнать свой архетип. Пройдите тест и узнайте, насколько вы совместимы"""
+            hello_text = """🌙 Добро пожаловать в мир удивительных архетипов! 🌙 \n\nВ нашем мире очень важно понять свой психотип для того, чтобы понять, в какую сторону двигаться по жизни. Пройди тест и я помогу тебе определить свою идентичность. \n\nВас пригласили для определения совместимости. Сперва вам необходимо узнать свой архетип. Пройдите тест и узнайте, насколько вы совместимы"""
 
         await bot.send_message(current_user_id, hello_text, reply_markup=related_markup)
 
@@ -717,12 +772,10 @@ async def on_start(message: types.Message):
             profile_button
         )
 
-        await message.reply("""🌙 Добро пожаловать в мир удивительных архетипов! 🌙
-
-        В нашем мире очень важно понять свой психотип для того, чтобы понять, в какую сторону двигаться по жизни. Пройди тест и я помогу тебе определить свою идентичность. """, reply_markup=kb)
+        await message.reply("""🌙 Добро пожаловать в мир удивительных архетипов! 🌙\n\nВ нашем мире очень важно понять свой психотип для того, чтобы понять, в какую сторону двигаться по жизни. Пройди тест и я помогу тебе определить свою идентичность. """, reply_markup=kb)
 
         conn.close()
-    
+
 
 # Обработчик для инициализации теста для связанных пользователей
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('startrelatedtest_'))
@@ -761,8 +814,7 @@ async def cmd_set_main(callback_query: types.CallbackQuery):
     second_user_archetype_id = cursor.fetchone()[0]
 
     # Находим совместимость архетипов
-    cursor.execute("SELECT first_user_description FROM main_compatibility WHERE "
-                "(first_arch_id = ? AND second_arch_id = ?) OR (first_arch_id = ? AND second_arch_id = ?)",
+    cursor.execute("SELECT first_user_description FROM main_сompatibility WHERE (first_arch_id = ? AND second_arch_id = ?) OR (first_arch_id = ? AND second_arch_id = ?)",
                 (first_user_archetype_id, second_user_archetype_id, second_user_archetype_id, first_user_archetype_id))
     first_user_description = cursor.fetchone()[0]
 
@@ -780,12 +832,15 @@ async def cmd_set_main(callback_query: types.CallbackQuery):
     # Получаем архетип текущего пользователя
     cursor.execute("SELECT archetype_name FROM main_archetype WHERE id = ?", (second_user_archetype_id,))
     second_user_archetype_name = cursor.fetchone()[0]
+    
+    comp_markup = types.InlineKeyboardMarkup()
+    comp_markup.add(cancel_button)
 
     # Отправляем информацию о совместимости текущему пользователю
-    await bot.send_message(user_id, f"Ваша совместимость готова. Архетип пользователя {first_user_name} - {first_user_archetype_name}. Ваш архетип - {second_user_archetype_name}. {first_user_description}.")
+    await bot.send_message(user_id, f"Ваша совместимость готова. Архетип пользователя {first_user_name} - {first_user_archetype_name}. Ваш архетип - {second_user_archetype_name}. {first_user_description}.", reply_markup=comp_markup)
 
     # Отправляем информацию о совместимости инициатору
-    await bot.send_message(first_user_id, f"Ваша совместимость готова. Архетип пользователя {user_name} - {second_user_archetype_name}. Ваш архетип - {first_user_archetype_name}. {first_user_description}.")
+    await bot.send_message(first_user_id, f"Ваша совместимость готова. Архетип пользователя {user_name} - {second_user_archetype_name}. Ваш архетип - {first_user_archetype_name}. {first_user_description}.", reply_markup=comp_markup)
 
 
 # Функция для возврата в главное меню и отмены оплаты
@@ -822,7 +877,7 @@ async def generate_invite_link(callback_query: types.CallbackQuery):
             await bot.send_message(user_id, "Перед приглашением пользователя необходимо закончить прохождение теста", reply_markup=invite_markup)
 
         else:
-            invite_link = f'https://t.me/Pryanebot?start={user_id}'
+            invite_link = f'https://t.me/arhip_quiz_bot?start={user_id}'
             await bot.send_message(user_id, f'Ваша уникальная ссылка для приглашения: {invite_link}. Отправьте её тому, с кем хотите проверить совместимость.')
 
     else:
@@ -848,14 +903,14 @@ async def cmd_set_main(callback_query: types.CallbackQuery, state: FSMContext):
 
     if test_row:
         test_id = test_row[0]
+        not_finished_markup = types.InlineKeyboardMarkup()
+        not_finished_markup.add(types.InlineKeyboardButton("Продолжить тест", callback_data=f"continue_test_{test_id}"), types.InlineKeyboardButton("Начать с начала", callback_data=f"start_new_test"))
+        not_finished_markup.add(types.InlineKeyboardButton("Вернуться в главное меню", callback_data=f"cancel"))
+
         # Если есть не законченный тест, отправляем сообщение с вариантами действий
         await callback_query.message.answer(
             "У вас есть один не законченный тест. Желаете продолжить или начать с начала?",
-            reply_markup=types.InlineKeyboardMarkup().add(
-                types.InlineKeyboardButton("Продолжить тест", callback_data=f"continue_test_{test_id}"),
-                types.InlineKeyboardButton("Начать с начала", callback_data=f"start_new_test"),
-                types.InlineKeyboardButton("Вернуться в главное меню", callback_data=f"main_menu")
-            )
+            reply_markup=not_finished_markup
         )
     else:
         # Если нет не законченных тестов, вызываем функцию start_new_test()
@@ -868,6 +923,8 @@ async def cmd_set_main(callback_query: types.CallbackQuery, state: FSMContext):
 # Обработчик для продолжения ранее начатого теста
 @dp.callback_query_handler(lambda callback_query: callback_query.data.startswith('continue_test_'))
 async def continue_test(callback_query: types.CallbackQuery, state: FSMContext):
+
+    del messages_for_delete[:]
     user_id = callback_query.from_user.id
     test_id = callback_query.data.split('_')
 
@@ -887,6 +944,8 @@ async def continue_test(callback_query: types.CallbackQuery, state: FSMContext):
 # Обработчик для инициализации теста
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "start_new_test")
 async def go_new_test(callback_query: types.CallbackQuery, state: FSMContext):
+
+    del messages_for_delete[:]
     user_id = callback_query.from_user.id
 
     # Подключаемся к SQLite базе данных quiz.db
@@ -900,22 +959,23 @@ async def go_new_test(callback_query: types.CallbackQuery, state: FSMContext):
 
         test_id = test_id[0]  # Извлекаем значение id
 
-        # Удаляем из main_test полученную запись
-        cursor.execute("DELETE FROM main_test WHERE id = ?", (test_id,))
-        conn.commit()  # Сохраняем изменения в базе данных
+        if test_id:
+            # Удаляем из main_test полученную запись
+            cursor.execute("DELETE FROM main_test WHERE id = ?", (test_id,))
+            conn.commit()  # Сохраняем изменения в базе данных
 
-        # Удаляем из main_test_process все записи, где test_id = полученному ранее id
-        cursor.execute("DELETE FROM main_test_process WHERE test_id_id = ?", (test_id,))
-        conn.commit()  # Сохраняем изменения в базе данных
+            # Удаляем из main_test_process все записи, где test_id = полученному ранее id
+            cursor.execute("DELETE FROM main_test_process WHERE test_id_id = ?", (test_id,))
+            conn.commit()  # Сохраняем изменения в базе данных
 
         # Отправляем пользователю сообщение о завершении теста
-        await bot.send_message(user_id, "Текущий тест был завершен.")
+        # await bot.send_message(user_id, "Текущий тест был завершен.")
 
     except sqlite3.Error as e:
         print(f"Ошибка базы данных: {e}")
     finally:
         conn.close()  # Закрываем соединение с базой данных
-        start_new_test(user_id)
+        await start_new_test(user_id)
 
 
 # Обработчик для инфоблока оформления подписки
@@ -924,13 +984,9 @@ async def go_new_subscribt(callback_query: types.CallbackQuery):
 
     go_new_subscribe_markup = types.InlineKeyboardMarkup()
     go_new_subscribe_markup.add(process_subscribe_button, cancel_button)
-    
-    await bot.send_message(callback_query.from_user.id, """<b>Подписка на 30 дней - 1000р.</b> 
-                           
-                           Оформив подписку, вы сможете: 
-                           - Проходить тест на определение архетипа личности неограниченное количество раз 
-                           - Приглашать неограниченное количество друзей для проверки совместимости""", reply_markup=go_new_subscribe_markup, parse_mode="HTML")
-    
+
+    await bot.send_message(callback_query.from_user.id, """<b>Подписка на 30 дней - 1000р.</b>\n\nОформив подписку, вы сможете:\n- Проходить тест на определение архетипа личности неограниченное количество раз\n- Приглашать неограниченное количество друзей для проверки совместимости""", reply_markup=go_new_subscribe_markup, parse_mode="HTML")
+
 
 # Обработчик для инфоблока покупки одной совместимости
 @dp.callback_query_handler(lambda callback_query: callback_query.data == "buy_compat")
@@ -938,9 +994,9 @@ async def go_new_compat(callback_query: types.CallbackQuery):
 
     go_new_compat_markup = types.InlineKeyboardMarkup()
     go_new_compat_markup.add(process_compat_button, cancel_button)
-    
-    await bot.send_message(callback_query.from_user.id, """<b>Одна проверка совместимости - 300р.</b> 
-                           
+
+    await bot.send_message(callback_query.from_user.id, """<b>Одна проверка совместимости - 300р.</b>
+
     Позволяет проверить совместимость вашего архетипа и архетипа любого вашего друга.""", reply_markup=go_new_compat_markup, parse_mode="HTML")
 
 
@@ -955,9 +1011,9 @@ async def get_my_profile(callback_query: types.CallbackQuery):
 
     # Узнаем инфу об имени пользователя
     user_name = callback_query.from_user.username
-    
-    await bot.send_message(callback_query.from_user.id, f"""Добро пожаловать, <b>{user_name}</b>! 
-                           
+
+    await bot.send_message(callback_query.from_user.id, f"""Добро пожаловать, <b>{user_name}</b>!
+
     Выберите пункт меню: """, reply_markup=my_profile_markup, parse_mode="HTML")
 
 
@@ -981,14 +1037,14 @@ async def get_my_subscribes(callback_query: types.CallbackQuery):
         my_subscribe_markup = types.InlineKeyboardMarkup()
         my_subscribe_markup.add(profile_button)
 
-        
+
         await bot.send_message(callback_query.from_user.id, f"В настоящий момент у вас есть одна активная подписка. Истекает <b>{end_date}</b>", reply_markup=my_subscribe_markup, parse_mode="HTML")
 
     else:
         my_subscribe_markup = types.InlineKeyboardMarkup()
         my_subscribe_markup.add(subscribe_button, profile_button)
 
-        
+
         await bot.send_message(callback_query.from_user.id, "В настоящий момент у вас нет активных подписок", reply_markup=my_subscribe_markup)
 
 
@@ -1019,7 +1075,7 @@ async def get_my_subscribes(callback_query: types.CallbackQuery):
         my_archetype_markup = types.InlineKeyboardMarkup()
         my_archetype_markup.add(profile_button)
 
-        
+
         await bot.send_message(callback_query.from_user.id, f"""Ваш архетип - <b>{archetype_name_row[0]}</b>
 
 {archetype_description_row[0]}""", reply_markup=my_archetype_markup, parse_mode="HTML")
@@ -1028,9 +1084,27 @@ async def get_my_subscribes(callback_query: types.CallbackQuery):
         my_subscribe_markup = types.InlineKeyboardMarkup()
         my_subscribe_markup.add(start_test_button, profile_button)
 
-        
+
         await bot.send_message(callback_query.from_user.id, "Ваш архетип пока не определен. Пройдите тест для его получения.", reply_markup=my_subscribe_markup)
 
+
+# Обработчик исключений
+# @dp.errors_handler(exception=RetryAfter)
+# async def exception_handler(update: types.Update, exception: exceptions.RetryAfter):
+#     await bot.send_message(user_id, f'Бот заблокирован на 10 секунд из-за слишком большого количества запросов. Контент загрузится автоматически. Пожалуйста, подождите.')
+#     await asyncio.sleep(10)
+#     await send_question_and_answers(user_id, test_id, current_question, question_text, answers)
+#     return True
+    
+    
+@dp.errors_handler()
+async def retry_after_handler(update: types.Update, exception: Exception):
+    if isinstance(exception, RetryAfter):
+        retry_after_time = exception.retry_after
+        await bot.send_message(user_id, f'Бот заблокирован на {retry_after_time} секунд из-за слишком большого количества запросов. Контент загрузится автоматически. Пожалуйста, подождите.')
+        await asyncio.sleep(retry_after_time)
+        # await send_question_and_answers(user_id, test_id, current_question, question_text, answers)
+        await dp.process_update(update)
 
 
 if __name__ == '__main__':
