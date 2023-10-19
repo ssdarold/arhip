@@ -15,16 +15,11 @@ import uuid
 import asyncio
 
 
-
-# bot = Bot(token="573458948:AAFKzIe-RW9Xf3nNWDeoq6THa6ZgovqkZL8")
-bot = Bot(token="6420492897:AAGoSWVomzoODKTT6IGf8YAnFql-xOamytU", proxy="http://proxy.server:3128")
+bot = Bot(token="", proxy="http://proxy.server:3128")
 dp = Dispatcher(bot)
 
-# YUKASSA_SECRET_KEY = "live_6mBjQ_DlCPJz7TRBopJKbeyixm1Jx7cpK7Nxy_HD2zY"
-# YUKASSA_SHOP_ID = "236798"
-
-YUKASSA_SECRET_KEY = "test_I2mD16phit9EpgNdty25G7WuV9TyQJ0WzeECBiF9RLE"
-YUKASSA_SHOP_ID = "241908"
+YUKASSA_SECRET_KEY = ""
+YUKASSA_SHOP_ID = ""
 
 # ================ Кнопки ==============
 
